@@ -4,8 +4,10 @@ import type { AuthPayload } from './types';
 
 export const COOKIE_NAME = 'nc_auth';
 
+const DEFAULT_JWT_SECRET = 'nonchat-secret-as-cloud-host-2026-secure-jwt-key-998877665544332211';
+
 function getJwtSecret(): string {
-  return (process.env.JWT_SECRET || 'nonchat-jwt-secret-please-change-in-production-to-64-random-chars').trim();
+  return (process.env.JWT_SECRET || DEFAULT_JWT_SECRET).trim();
 }
 
 export function signToken(payload: Omit<AuthPayload, 'iat' | 'exp'>): string {
