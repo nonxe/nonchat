@@ -2,22 +2,16 @@
 import { useState, useEffect } from 'react';
 import NewChatModal from '@/components/NewChatModal';
 import SettingsModal from '@/components/SettingsModal';
-import type { PublicUser } from '@/lib/types';
 
 export default function ChatIndex() {
   const [showSearch, setShowSearch] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
-  const [users, setUsers] = useState<PublicUser[]>([]);
   const [me, setMe] = useState<{ username: string; displayName: string; avatarUrl: string | null } | null>(null);
 
   useEffect(() => {
     fetch('/api/auth/me')
       .then(r => r.ok ? r.json() : null)
       .then(d => { if (d?.user) setMe(d.user); });
-
-    fetch('/api/users')
-      .then(r => r.ok ? r.json() : null)
-      .then(d => { if (d?.users) setUsers(d.users); });
   }, []);
 
   async function handleStartDM(username: string) {
@@ -51,7 +45,7 @@ export default function ChatIndex() {
         </div>
 
         <p style={{ color: 'var(--text-secondary)', fontSize: 'var(--text-md)', lineHeight: 1.5, marginTop: -4 }}>
-          Ultra-fast, secure & private messaging powered by modern cloud infrastructure.
+          Private, high-performance messenger. Search any @username to begin chatting.
         </p>
 
         {/* Quick action buttons */}
@@ -61,7 +55,7 @@ export default function ChatIndex() {
             className="btn btn-primary"
             style={{ padding: '10px 22px', fontSize: 'var(--text-sm)' }}
           >
-            🔍 Search Users & Chat
+            🔍 Search @Username
           </button>
 
           <button
@@ -69,7 +63,7 @@ export default function ChatIndex() {
             className="btn btn-secondary"
             style={{ padding: '10px 22px', fontSize: 'var(--text-sm)' }}
           >
-            ⚙️ Open Settings
+            ⚙️ Settings & Profile
           </button>
         </div>
 
@@ -85,7 +79,6 @@ export default function ChatIndex() {
       <NewChatModal
         isOpen={showSearch}
         onClose={() => setShowSearch(false)}
-        users={users}
         onSelectUser={handleStartDM}
       />
 

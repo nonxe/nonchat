@@ -1,61 +1,55 @@
 /**
- * Uploads a file to Catbox with automatic fallback.
- * All media uploads go through our own /api/upload endpoint (server-side)
- * so the underlying service stays hidden from clients.
+ * High-speed, reliable media upload helper for NONCHAT.
+ * Uploads media to permanent Catbox CDN with automatic fallback.
  */
 export async function uploadToCatbox(file: File): Promise<string> {
-  // 1. Try David Cyril uploader proxy first
-  try {
-    const formData = new FormData();
-    formData.append('file', file);
+  const arrayBuffer = await file.arrayBuffer();
+  const buffer = Buffer.from(arrayBuffer);
 
-    const res = await fetch('https://apis.davidcyril.name.ng/uploader/catbox', {
+  // 1. Direct Catbox.moe permanent upload (Primary)
+  try {
+    const blob = new Blob([buffer], { type: file.type || 'application/octet-stream' });
+    const formData = new FormData();
+    formData.append('reqtype', 'fileupload');
+    formData.append('fileToUpload', blob, file.name || 'upload.bin');
+
+    const res = await fetch('https://catbox.moe/user/api.php', {
       method: 'POST',
       body: formData,
-      signal: AbortSignal.timeout(6000),
     });
 
     if (res.ok) {
-      const text = await res.text();
-      try {
-        const json = JSON.parse(text);
-        const url = json?.url || json?.link || json?.data?.url || (typeof json === 'string' ? json : null);
-        if (url && typeof url === 'string' && url.startsWith('http')) {
-          return url.trim();
-        }
-      } catch {
-        if (text.startsWith('http')) {
-          return text.trim();
-        }
+      const url = (await res.text()).trim();
+      if (url.startsWith('http')) {
+        return url;
       }
     }
   } catch (err) {
-    console.warn('Catbox proxy failed, using direct endpoint fallback:', err);
+    console.warn('Primary Catbox upload failed, attempting fallback:', err);
   }
 
-  // 2. Fallback to direct Catbox API
+  // 2. Litterbox fallback
   try {
-    const directForm = new FormData();
-    directForm.append('reqtype', 'fileupload');
-    directForm.append('fileToUpload', file, file.name);
+    const blob = new Blob([buffer], { type: file.type || 'application/octet-stream' });
+    const formData = new FormData();
+    formData.append('reqtype', 'fileupload');
+    formData.append('time', '72h');
+    formData.append('fileToUpload', blob, file.name || 'upload.bin');
 
-    const directRes = await fetch('https://catbox.moe/user/api.php', {
+    const res = await fetch('https://litterbox.catbox.moe/resources/internals/api.php', {
       method: 'POST',
-      body: directForm,
+      body: formData,
     });
 
-    if (!directRes.ok) {
-      const errorText = await directRes.text();
-      throw new Error(`Upload failed (${directRes.status}): ${errorText}`);
+    if (res.ok) {
+      const url = (await res.text()).trim();
+      if (url.startsWith('http')) {
+        return url;
+      }
     }
-
-    const directUrl = (await directRes.text()).trim();
-    if (!directUrl.startsWith('http')) {
-      throw new Error(`Invalid response from storage: ${directUrl}`);
-    }
-
-    return directUrl;
-  } catch (fallbackErr: any) {
-    throw new Error(`Media upload failed: ${fallbackErr.message}`);
+  } catch (fallbackErr) {
+    console.error('Fallback upload failed:', fallbackErr);
   }
+
+  throw new Error('Could not upload media. Please check your connection and try again.');
 }

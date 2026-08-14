@@ -1,14 +1,13 @@
 'use client';
 import { useState, useEffect, useCallback } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
-import Link from 'next/link';
 import type { Conversation, Room, PublicUser } from '@/lib/types';
 import NewChatModal from '@/components/NewChatModal';
 import SettingsModal from '@/components/SettingsModal';
 
 interface Me { username: string; displayName: string; avatarUrl: string | null; }
 
-function AvatarSmall({ name, src, size = 36, status }: { name: string; src?: string | null; size?: number; status?: string }) {
+function AvatarSmall({ name, src, size = 42, status }: { name: string; src?: string | null; size?: number; status?: string }) {
   const initials = (name || 'U').split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
   const colors = ['#0a84ff','#30d158','#ff9f0a','#bf5af2','#ff453a','#64d2ff'];
   const color = colors[(name || 'U').charCodeAt(0) % colors.length];
@@ -27,7 +26,7 @@ function timeAgo(iso: string) {
     const d = new Date(iso);
     const now = new Date();
     const diff = Math.floor((now.getTime() - d.getTime()) / 1000);
-    if (diff < 60) return 'now';
+    if (diff < 60) return 'just now';
     if (diff < 3600) return `${Math.floor(diff / 60)}m`;
     if (diff < 86400) return `${Math.floor(diff / 3600)}h`;
     return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
@@ -40,10 +39,9 @@ export default function ChatLayout({ children }: { children: React.ReactNode }) 
   const router = useRouter();
   const pathname = usePathname();
   const [me, setMe] = useState<Me | null>(null);
-  const [tab, setTab] = useState<'dms' | 'rooms' | 'people'>('dms');
+  const [tab, setTab] = useState<'dms' | 'rooms'>('dms');
   const [convos, setConvos] = useState<Conversation[]>([]);
   const [rooms, setRooms] = useState<Room[]>([]);
-  const [people, setPeople] = useState<PublicUser[]>([]);
   const [search, setSearch] = useState('');
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [showNewChat, setShowNewChat] = useState(false);
@@ -99,29 +97,17 @@ export default function ChatLayout({ children }: { children: React.ReactNode }) 
     } catch {}
   }, []);
 
-  // Fetch people
-  const fetchPeople = useCallback(async () => {
-    try {
-      const r = await fetch('/api/users');
-      if (r.ok) {
-        const d = await r.json();
-        setPeople(Array.isArray(d.users) ? d.users : []);
-      }
-    } catch {}
-  }, []);
-
   useEffect(() => {
     fetchConvos();
     fetchRooms();
-    fetchPeople();
-  }, [fetchConvos, fetchRooms, fetchPeople]);
+  }, [fetchConvos, fetchRooms]);
 
-  // Background polling every 4 seconds
+  // Background polling every 3 seconds for near real-time Telegram feel
   useEffect(() => {
     const iv = setInterval(() => {
       fetchConvos();
       fetchRooms();
-    }, 4000);
+    }, 3000);
     return () => clearInterval(iv);
   }, [fetchConvos, fetchRooms]);
 
@@ -177,17 +163,15 @@ export default function ChatLayout({ children }: { children: React.ReactNode }) 
   }
 
   function otherParticipant(conv: Conversation): string {
-    return conv.participants.find(p => p !== me?.username) || conv.participants[0] || 'Unknown';
+    return conv.participants.find(p => p !== me?.username) || conv.participants[0] || 'User';
   }
 
   const filteredConvos = convos.filter(c => {
     const other = otherParticipant(c);
-    const person = people.find(p => p.username === other);
-    return !search || other.toLowerCase().includes(search.toLowerCase()) || (person?.displayName && person.displayName.toLowerCase().includes(search.toLowerCase()));
+    return !search || other.toLowerCase().includes(search.toLowerCase()) || (c.lastMessage && c.lastMessage.toLowerCase().includes(search.toLowerCase()));
   }).sort((a, b) => new Date(b.updatedAt || 0).getTime() - new Date(a.updatedAt || 0).getTime());
 
   const filteredRooms = rooms.filter(r => !search || r.name.toLowerCase().includes(search.toLowerCase()));
-  const filteredPeople = people.filter(p => p.username !== me?.username && (!search || p.username.toLowerCase().includes(search.toLowerCase()) || p.displayName.toLowerCase().includes(search.toLowerCase())));
 
   return (
     <div className="app-shell">
@@ -196,175 +180,200 @@ export default function ChatLayout({ children }: { children: React.ReactNode }) 
         <div onClick={() => setSidebarOpen(false)} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 49 }} />
       )}
 
-      {/* Sidebar */}
+      {/* Telegram/WhatsApp Styled Sidebar */}
       <aside className={`sidebar ${sidebarOpen ? 'open' : ''}`}>
-        {/* Header */}
+        {/* Top Header */}
         <div className="sidebar-header">
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <span className="sidebar-brand">NON<span>CHAT</span></span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            {me && (
+              <div onClick={() => setShowSettings(true)} style={{ cursor: 'pointer' }}>
+                <AvatarSmall name={me.displayName} src={me.avatarUrl} size={36} status="online" />
+              </div>
+            )}
+            <div>
+              <span className="sidebar-brand">NON<span>CHAT</span></span>
+              <div style={{ fontSize: 10, color: 'var(--text-secondary)', fontWeight: 500 }}>AS CLOUD SECURE</div>
+            </div>
           </div>
+
           <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
-            {/* New Chat Button */}
+            {/* New Message / Username Search Button */}
             <button
               id="new-chat-btn"
               className="btn btn-icon btn-ghost"
               onClick={() => setShowNewChat(true)}
-              title="New Chat / Search Username"
-              style={{ fontSize: 16, color: 'var(--accent)' }}
+              title="New Chat (Search @username)"
+              style={{ fontSize: 18, color: 'var(--accent)' }}
             >
               ✏️
             </button>
-            {/* New Room Button */}
+
+            {/* New Room / Channel Button */}
             {tab === 'rooms' && (
               <button
                 id="new-room-btn"
                 className="btn btn-icon btn-ghost"
                 onClick={() => setShowNewRoom(true)}
-                title="New Room"
+                title="Create Room"
                 style={{ fontSize: 18 }}
               >
-                ＋
+                ➕
               </button>
             )}
-            {/* Settings Gear */}
+
+            {/* Settings */}
             <button
               id="settings-btn"
               className="btn btn-icon btn-ghost"
               onClick={() => setShowSettings(true)}
               title="Settings & Profile"
-              style={{ fontSize: 16 }}
+              style={{ fontSize: 18 }}
             >
               ⚙️
             </button>
           </div>
         </div>
 
-        {/* Search */}
+        {/* Search Bar */}
         <div className="sidebar-search">
-          <input
-            id="sidebar-search"
-            type="search"
-            placeholder={tab === 'dms' ? 'Search messages & users…' : tab === 'rooms' ? 'Search rooms…' : 'Find people…'}
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-          />
+          <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+            <input
+              id="sidebar-search"
+              type="search"
+              placeholder={tab === 'dms' ? 'Search chats or @username…' : 'Search rooms…'}
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+            />
+          </div>
         </div>
 
-        {/* Tabs */}
+        {/* Segmented Controls (Chats vs Channels) */}
         <div className="sidebar-tabs">
-          {(['dms','rooms','people'] as const).map(t => (
-            <button key={t} id={`tab-${t}`} className={`sidebar-tab ${tab === t ? 'active' : ''}`} onClick={() => { setTab(t); setSearch(''); }}>
-              {t === 'dms' ? 'Chats' : t === 'rooms' ? 'Rooms' : 'People'}
-            </button>
-          ))}
+          <button
+            id="tab-dms"
+            className={`sidebar-tab ${tab === 'dms' ? 'active' : ''}`}
+            onClick={() => { setTab('dms'); setSearch(''); }}
+          >
+            Chats ({convos.length})
+          </button>
+          <button
+            id="tab-rooms"
+            className={`sidebar-tab ${tab === 'rooms' ? 'active' : ''}`}
+            onClick={() => { setTab('rooms'); setSearch(''); }}
+          >
+            Rooms ({rooms.length})
+          </button>
         </div>
 
-        {/* List */}
+        {/* List of active chats */}
         <div className="sidebar-list">
           {tab === 'dms' && (
-            filteredConvos.length === 0
-              ? <div className="empty-state" style={{ padding: '40px 16px' }}>
-                  <div className="empty-state-icon">💬</div>
-                  <div style={{ fontSize: 'var(--text-md)', fontWeight: 700, color: 'var(--text-primary)', marginBottom: 4 }}>No conversations yet</div>
-                  <p className="empty-state-sub" style={{ marginBottom: 12 }}>Search anyone by username to start a chat.</p>
-                  <button onClick={() => setShowNewChat(true)} className="btn btn-primary" style={{ padding: '8px 18px', fontSize: 'var(--text-xs)' }}>
-                    Start New Chat
-                  </button>
+            filteredConvos.length === 0 ? (
+              <div className="empty-state" style={{ padding: '40px 16px' }}>
+                <div className="empty-state-icon">💬</div>
+                <div style={{ fontSize: 'var(--text-md)', fontWeight: 700, color: 'var(--text-primary)', marginBottom: 4 }}>
+                  {search ? 'No active chat matches' : 'No conversations yet'}
                 </div>
-              : filteredConvos.map(conv => {
-                  const other = otherParticipant(conv);
-                  const person = people.find(p => p.username === other);
-                  const isActive = pathname === `/chat/${conv.id}`;
-                  return (
-                    <div key={conv.id} id={`conv-${conv.id}`} className={`sidebar-item ${isActive ? 'active' : ''}`}
-                      onClick={() => { router.push(`/chat/${conv.id}`); setSidebarOpen(false); }}>
-                      <AvatarSmall name={person?.displayName || other} src={person?.avatarUrl} size={42} status={person?.status || 'offline'} />
-                      <div className="sidebar-item-info">
-                        <div className="sidebar-item-name">{person?.displayName || other}</div>
-                        <div className="sidebar-item-preview">{conv.lastMessage || 'Tap to send a message'}</div>
+                <p className="empty-state-sub" style={{ marginBottom: 14 }}>
+                  {search ? `Tap below to search the network for "${search}"` : 'Private by default. Search any user to start a conversation.'}
+                </p>
+                <button
+                  onClick={() => setShowNewChat(true)}
+                  className="btn btn-primary"
+                  style={{ padding: '8px 20px', fontSize: 'var(--text-xs)' }}
+                >
+                  🔍 Search @Username
+                </button>
+              </div>
+            ) : (
+              filteredConvos.map(conv => {
+                const other = otherParticipant(conv);
+                const isActive = pathname === `/chat/${conv.id}`;
+                return (
+                  <div
+                    key={conv.id}
+                    id={`conv-${conv.id}`}
+                    className={`sidebar-item ${isActive ? 'active' : ''}`}
+                    onClick={() => { router.push(`/chat/${conv.id}`); setSidebarOpen(false); }}
+                  >
+                    <AvatarSmall name={other} size={44} status="online" />
+                    <div className="sidebar-item-info">
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <div className="sidebar-item-name">{other}</div>
+                        {conv.lastMessageAt && (
+                          <div className="sidebar-item-time">{timeAgo(conv.lastMessageAt)}</div>
+                        )}
                       </div>
-                      {conv.lastMessageAt && <div className="sidebar-item-time">{timeAgo(conv.lastMessageAt)}</div>}
+                      <div className="sidebar-item-preview">{conv.lastMessage || 'Tap to send a message'}</div>
                     </div>
-                  );
-                })
+                  </div>
+                );
+              })
+            )
           )}
 
           {tab === 'rooms' && (
-            filteredRooms.length === 0
-              ? <div className="empty-state" style={{ padding: '40px 16px' }}>
-                  <div className="empty-state-icon">🏠</div>
-                  <div style={{ fontSize: 'var(--text-md)', fontWeight: 700, color: 'var(--text-primary)', marginBottom: 4 }}>No rooms yet</div>
-                  <p className="empty-state-sub" style={{ marginBottom: 12 }}>Create a public community channel.</p>
-                  <button onClick={() => setShowNewRoom(true)} className="btn btn-primary" style={{ padding: '8px 18px', fontSize: 'var(--text-xs)' }}>
-                    Create Room
-                  </button>
-                </div>
-              : filteredRooms.map(room => {
-                  const isActive = pathname === `/chat/rooms/${room.id}`;
-                  return (
-                    <div key={room.id} id={`room-${room.id}`} className={`sidebar-item ${isActive ? 'active' : ''}`}
-                      onClick={() => { router.push(`/chat/rooms/${room.id}`); setSidebarOpen(false); }}>
-                      <div className="avatar" style={{ width: 42, height: 42, background: 'var(--bg-tertiary)', borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18, color: 'var(--accent)', fontWeight: 700 }}>
-                        #
-                      </div>
-                      <div className="sidebar-item-info">
-                        <div className="sidebar-item-name">{room.name}</div>
-                        <div className="sidebar-item-preview">{room.description || 'Public channel'}</div>
-                      </div>
+            filteredRooms.length === 0 ? (
+              <div className="empty-state" style={{ padding: '40px 16px' }}>
+                <div className="empty-state-icon">🏠</div>
+                <div style={{ fontSize: 'var(--text-md)', fontWeight: 700, color: 'var(--text-primary)', marginBottom: 4 }}>No rooms yet</div>
+                <p className="empty-state-sub" style={{ marginBottom: 14 }}>Create a group or channel for everyone.</p>
+                <button onClick={() => setShowNewRoom(true)} className="btn btn-primary" style={{ padding: '8px 20px', fontSize: 'var(--text-xs)' }}>
+                  ➕ Create Room
+                </button>
+              </div>
+            ) : (
+              filteredRooms.map(room => {
+                const isActive = pathname === `/chat/rooms/${room.id}`;
+                return (
+                  <div
+                    key={room.id}
+                    id={`room-${room.id}`}
+                    className={`sidebar-item ${isActive ? 'active' : ''}`}
+                    onClick={() => { router.push(`/chat/rooms/${room.id}`); setSidebarOpen(false); }}
+                  >
+                    <div className="avatar" style={{ width: 44, height: 44, background: 'var(--bg-tertiary)', borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 20, color: 'var(--accent)', fontWeight: 700 }}>
+                      #
                     </div>
-                  );
-                })
-          )}
-
-          {tab === 'people' && (
-            filteredPeople.length === 0
-              ? <div className="empty-state" style={{ padding: '40px 16px' }}>
-                  <div className="empty-state-icon">👥</div>
-                  <p className="empty-state-sub">No other users registered yet.</p>
-                </div>
-              : filteredPeople.map(person => (
-                  <div key={person.username} id={`person-${person.username}`} className="sidebar-item"
-                    onClick={() => startDM(person.username)}>
-                    <AvatarSmall name={person.displayName} src={person.avatarUrl} size={42} status={person.status || 'offline'} />
                     <div className="sidebar-item-info">
-                      <div className="sidebar-item-name">{person.displayName}</div>
-                      <div className="sidebar-item-preview">@{person.username}</div>
+                      <div className="sidebar-item-name">{room.name}</div>
+                      <div className="sidebar-item-preview">{room.description || 'Public channel'}</div>
                     </div>
-                    <button className="btn btn-ghost" style={{ fontSize: 12, color: 'var(--accent)', padding: '4px 8px' }}>Chat</button>
                   </div>
-                ))
+                );
+              })
+            )
           )}
         </div>
 
-        {/* Footer with User info & Quick Settings */}
+        {/* Footer info */}
         {me && (
           <div className="sidebar-footer" onClick={() => setShowSettings(true)} style={{ cursor: 'pointer' }}>
             <AvatarSmall name={me.displayName} src={me.avatarUrl} size={36} status="online" />
             <div className="sidebar-footer-name">
               <div>{me.displayName}</div>
-              <div style={{ fontSize: 10, color: 'var(--accent-green)', fontWeight: 500, marginTop: 1 }}>● Active on AS CLOUD</div>
+              <div style={{ fontSize: 10, color: 'var(--text-secondary)' }}>@{me.username}</div>
             </div>
             <div className="sidebar-footer-actions">
-              <button id="quick-settings-btn" className="btn btn-icon btn-ghost" title="Settings" style={{ fontSize: 16 }}>⚙️</button>
+              <button className="btn btn-icon btn-ghost" title="Settings" style={{ fontSize: 16 }}>⚙️</button>
             </div>
           </div>
         )}
       </aside>
 
-      {/* Main Content Area */}
+      {/* Main Content View */}
       <main className="chat-main">
         {children}
       </main>
 
-      {/* New Chat / User Search Modal */}
+      {/* On-Demand Username Search Modal */}
       <NewChatModal
         isOpen={showNewChat}
         onClose={() => setShowNewChat(false)}
-        users={people}
         onSelectUser={startDM}
       />
 
-      {/* Settings & Profile Modal */}
+      {/* Settings Modal */}
       {me && (
         <SettingsModal
           isOpen={showSettings}
@@ -372,13 +381,12 @@ export default function ChatLayout({ children }: { children: React.ReactNode }) 
           me={me}
           onUpdateMe={(updated) => {
             setMe(prev => prev ? { ...prev, ...updated } : prev);
-            fetchPeople();
           }}
           onLogout={logout}
         />
       )}
 
-      {/* New Room Modal */}
+      {/* Create Room Modal */}
       {showNewRoom && (
         <div className="overlay" onClick={() => setShowNewRoom(false)}>
           <div className="modal" onClick={e => e.stopPropagation()}>
