@@ -18,14 +18,17 @@ export default function LoginPage() {
       const res = await fetch('/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, password }),
+        body: JSON.stringify({ username: username.trim(), password }),
       });
-      const data = await res.json();
-      if (!res.ok) { setError(data.error || 'Login failed'); return; }
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setError(data.error || data.detail || 'Invalid username or password');
+        return;
+      }
       router.push('/chat');
       router.refresh();
-    } catch {
-      setError('Network error. Please try again.');
+    } catch (err: any) {
+      setError('Network error: ' + (err.message || 'Please try again.'));
     } finally {
       setLoading(false);
     }

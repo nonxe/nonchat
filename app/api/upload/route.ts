@@ -18,16 +18,12 @@ export async function POST(req: NextRequest) {
     }
 
     // Determine media type
-    const mime = file.type;
+    const mime = file.type || '';
     let mediaType: 'image' | 'video' | 'file' = 'file';
     if (mime.startsWith('image/')) mediaType = 'image';
     else if (mime.startsWith('video/')) mediaType = 'video';
 
-    // Proxy upload to cloud storage
-    const uploadForm = new FormData();
-    uploadForm.append('file', file);
-
-    const url = await uploadToCatbox(uploadForm);
+    const url = await uploadToCatbox(file);
 
     return NextResponse.json({
       url,
