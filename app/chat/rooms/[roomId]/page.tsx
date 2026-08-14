@@ -1,20 +1,28 @@
 'use client';
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { useParams, useRouter } from 'next/navigation';
+import { useParams } from 'next/navigation';
 import type { Message, Room } from '@/lib/types';
 
 interface Me { username: string; displayName: string; avatarUrl: string | null; }
 
 function formatTime(iso: string) {
-  return new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  try {
+    return new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  } catch {
+    return '';
+  }
 }
 function formatDay(iso: string) {
-  const d = new Date(iso);
-  const today = new Date();
-  if (d.toDateString() === today.toDateString()) return 'Today';
-  const yest = new Date(); yest.setDate(today.getDate() - 1);
-  if (d.toDateString() === yest.toDateString()) return 'Yesterday';
-  return d.toLocaleDateString([], { weekday: 'long', month: 'short', day: 'numeric' });
+  try {
+    const d = new Date(iso);
+    const today = new Date();
+    if (d.toDateString() === today.toDateString()) return 'Today';
+    const yest = new Date(); yest.setDate(today.getDate() - 1);
+    if (d.toDateString() === yest.toDateString()) return 'Yesterday';
+    return d.toLocaleDateString([], { weekday: 'long', month: 'short', day: 'numeric' });
+  } catch {
+    return 'Today';
+  }
 }
 function formatSize(bytes: number) {
   if (bytes < 1024) return bytes + ' B';
@@ -23,9 +31,9 @@ function formatSize(bytes: number) {
 }
 
 function Avatar({ name, src, size = 28 }: { name: string; src?: string | null; size?: number }) {
-  const initials = name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
+  const initials = (name || 'U').split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
   const colors = ['#0a84ff','#30d158','#ff9f0a','#bf5af2','#ff453a','#64d2ff'];
-  const color = colors[name.charCodeAt(0) % colors.length];
+  const color = colors[(name || 'U').charCodeAt(0) % colors.length];
   return (
     <div className="avatar" style={{ width: size, height: size, minWidth: size }}>
       {src ? <img src={src} alt={name} /> : (
@@ -37,7 +45,6 @@ function Avatar({ name, src, size = 28 }: { name: string; src?: string | null; s
 
 export default function RoomPage() {
   const { roomId } = useParams<{ roomId: string }>();
-  const router = useRouter();
   const [me, setMe] = useState<Me | null>(null);
   const [room, setRoom] = useState<Room | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -53,22 +60,33 @@ export default function RoomPage() {
   const fileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    fetch('/api/auth/me').then(r => r.json()).then(d => {
-      if (d.user) setMe(d.user);
-      else router.push('/auth/login');
-    });
-  }, [router]);
+    fetch('/api/auth/me')
+      .then(r => r.ok ? r.json() : null)
+      .then(d => {
+        if (d?.user) setMe(d.user);
+      });
+  }, []);
 
   useEffect(() => {
-    fetch('/api/rooms').then(r => r.json()).then(d => {
-      const found = (d.rooms || []).find((r: Room) => r.id === roomId);
-      if (found) setRoom(found);
-    });
+    if (!roomId) return;
+    fetch('/api/rooms')
+      .then(r => r.ok ? r.json() : null)
+      .then(d => {
+        const found = (d?.rooms || []).find((r: Room) => r.id === roomId);
+        if (found) setRoom(found);
+      });
   }, [roomId]);
 
   const fetchMessages = useCallback(async () => {
-    const r = await fetch(`/api/rooms/${roomId}/messages`);
-    if (r.ok) { const d = await r.json(); setMessages(d.messages || []); setOptimisticMsgs([]); }
+    if (!roomId) return;
+    try {
+      const r = await fetch(`/api/rooms/${roomId}/messages`);
+      if (r.ok) {
+        const d = await r.json();
+        setMessages(Array.isArray(d.messages) ? d.messages : []);
+        setOptimisticMsgs([]);
+      }
+    } catch {}
   }, [roomId]);
 
   useEffect(() => { fetchMessages(); }, [fetchMessages]);
@@ -82,14 +100,22 @@ export default function RoomPage() {
   }
 
   async function send() {
-    if ((!text.trim() && !uploadFile) || sending || uploading) return;
+    if ((!text.trim() && !uploadFile) || sending || uploading || !me) return;
     setSending(true);
     const now = new Date().toISOString();
     const optimistic: Message = {
-      id: `opt-${Date.now()}`, conversationId: roomId,
-      senderId: me!.username, senderName: me!.displayName, senderAvatar: me!.avatarUrl,
-      content: text.trim() || null, mediaUrl: null, mediaType: null, mediaName: null, mediaSize: null,
-      timestamp: now, status: 'sent',
+      id: `opt-${Date.now()}`,
+      conversationId: roomId,
+      senderId: me.username,
+      senderName: me.displayName,
+      senderAvatar: me.avatarUrl,
+      content: text.trim() || null,
+      mediaUrl: null,
+      mediaType: null,
+      mediaName: null,
+      mediaSize: null,
+      timestamp: now,
+      status: 'sent',
     };
     setOptimisticMsgs(p => [...p, optimistic]);
     const sentText = text.trim();
@@ -102,11 +128,20 @@ export default function RoomPage() {
         setUploading(true);
         const fd = new FormData();
         fd.append('file', uploadFile);
-        const prog = setInterval(() => setUploadProgress(p => Math.min(p + 10, 85)), 200);
+        const prog = setInterval(() => setUploadProgress(p => Math.min(p + 15, 90)), 200);
         const upRes = await fetch('/api/upload', { method: 'POST', body: fd });
-        clearInterval(prog); setUploadProgress(100);
-        if (upRes.ok) { const u = await upRes.json(); mediaUrl = u.url; mediaType = u.mediaType; mediaName = u.mediaName; mediaSize = u.mediaSize; }
-        setUploading(false); setUploadFile(null); setUploadProgress(0);
+        clearInterval(prog);
+        setUploadProgress(100);
+        if (upRes.ok) {
+          const u = await upRes.json();
+          mediaUrl = u.url;
+          mediaType = u.mediaType;
+          mediaName = u.mediaName;
+          mediaSize = u.mediaSize;
+        }
+        setUploading(false);
+        setUploadFile(null);
+        setUploadProgress(0);
       }
       await fetch(`/api/rooms/${roomId}/messages`, {
         method: 'POST',
@@ -116,7 +151,9 @@ export default function RoomPage() {
       await fetchMessages();
     } catch {
       setOptimisticMsgs(p => p.filter(m => m.id !== optimistic.id));
-    } finally { setSending(false); }
+    } finally {
+      setSending(false);
+    }
   }
 
   function handleKey(e: React.KeyboardEvent) {
@@ -127,7 +164,8 @@ export default function RoomPage() {
     const file = e.target.files?.[0];
     if (!file) return;
     if (file.size > 15 * 1024 * 1024) { alert('File too large. Maximum 15MB.'); return; }
-    setUploadFile(file); e.target.value = '';
+    setUploadFile(file);
+    e.target.value = '';
   }
 
   const allMessages = [...messages, ...optimisticMsgs];
@@ -144,7 +182,7 @@ export default function RoomPage() {
       <div className="chat-header">
         <div style={{ width: 40, height: 40, background: 'var(--bg-elevated)', borderRadius: 12, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 20, flexShrink: 0 }}>#</div>
         <div className="chat-header-info">
-          <div className="chat-header-name">{room?.name || 'Loading…'}</div>
+          <div className="chat-header-name">{room?.name || 'Room'}</div>
           {room?.description && <div className="chat-header-sub">{room.description}</div>}
         </div>
       </div>
@@ -153,7 +191,7 @@ export default function RoomPage() {
         {allMessages.length === 0 && (
           <div className="empty-state" style={{ flex: 1 }}>
             <div className="empty-state-icon">🏠</div>
-            <div className="empty-state-title">Welcome to {room?.name}!</div>
+            <div className="empty-state-title">Welcome to {room?.name || 'this room'}!</div>
             <div className="empty-state-sub">Be the first to say something.</div>
           </div>
         )}

@@ -1,10 +1,8 @@
 'use client';
 import { useState } from 'react';
-import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 
 export default function RegisterPage() {
-  const router = useRouter();
   const [form, setForm] = useState({ username: '', displayName: '', password: '', confirm: '' });
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
@@ -31,14 +29,14 @@ export default function RegisterPage() {
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setError(data.error || data.detail || 'Registration failed. Please check your connection.');
+        setError(data.error || data.detail || 'Registration failed. Please try again.');
+        setLoading(false);
         return;
       }
-      router.push('/chat');
-      router.refresh();
+      // Hard redirect to ensure auth cookie is applied fresh to server components
+      window.location.href = '/chat';
     } catch (err: any) {
-      setError('Network error: ' + (err.message || 'Please check your connection and try again.'));
-    } finally {
+      setError('Network error: ' + (err.message || 'Please try again.'));
       setLoading(false);
     }
   }

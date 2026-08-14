@@ -1,5 +1,5 @@
 'use client';
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import Link from 'next/link';
 import type { Conversation, Room, PublicUser } from '@/lib/types';
@@ -7,11 +7,11 @@ import type { Conversation, Room, PublicUser } from '@/lib/types';
 interface Me { username: string; displayName: string; avatarUrl: string | null; }
 
 function AvatarSmall({ name, src, size = 36, status }: { name: string; src?: string | null; size?: number; status?: string }) {
-  const initials = name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
+  const initials = (name || 'U').split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
   const colors = ['#0a84ff','#30d158','#ff9f0a','#bf5af2','#ff453a','#64d2ff'];
-  const color = colors[name.charCodeAt(0) % colors.length];
+  const color = colors[(name || 'U').charCodeAt(0) % colors.length];
   return (
-    <div className="avatar" style={{ width: size, height: size, minWidth: size }}>
+    <div className="avatar" style={{ width: size, height: size, minWidth: size, borderRadius: '50%' }}>
       {src ? <img src={src} alt={name} /> : (
         <span className="avatar-initials" style={{ fontSize: size * 0.38, background: color, width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '50%' }}>{initials}</span>
       )}
@@ -21,13 +21,17 @@ function AvatarSmall({ name, src, size = 36, status }: { name: string; src?: str
 }
 
 function timeAgo(iso: string) {
-  const d = new Date(iso);
-  const now = new Date();
-  const diff = Math.floor((now.getTime() - d.getTime()) / 1000);
-  if (diff < 60) return 'now';
-  if (diff < 3600) return `${Math.floor(diff / 60)}m`;
-  if (diff < 86400) return `${Math.floor(diff / 3600)}h`;
-  return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+  try {
+    const d = new Date(iso);
+    const now = new Date();
+    const diff = Math.floor((now.getTime() - d.getTime()) / 1000);
+    if (diff < 60) return 'now';
+    if (diff < 3600) return `${Math.floor(diff / 60)}m`;
+    if (diff < 86400) return `${Math.floor(diff / 3600)}h`;
+    return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+  } catch {
+    return '';
+  }
 }
 
 export default function ChatLayout({ children }: { children: React.ReactNode }) {
@@ -47,50 +51,92 @@ export default function ChatLayout({ children }: { children: React.ReactNode }) 
 
   // Fetch current user
   useEffect(() => {
-    fetch('/api/auth/me').then(r => r.json()).then(d => {
-      if (d.user) setMe(d.user);
-      else router.push('/auth/login');
-    }).catch(() => router.push('/auth/login'));
-  }, [router]);
+    let mounted = true;
+    fetch('/api/auth/me')
+      .then(async (r) => {
+        if (!r.ok) {
+          window.location.href = '/auth/login';
+          return null;
+        }
+        return r.json();
+      })
+      .then((d) => {
+        if (!mounted) return;
+        if (d?.user) {
+          setMe(d.user);
+        }
+      })
+      .catch(() => {
+        if (mounted) window.location.href = '/auth/login';
+      });
+
+    return () => { mounted = false; };
+  }, []);
 
   // Fetch conversations
   const fetchConvos = useCallback(async () => {
-    const r = await fetch('/api/conversations');
-    if (r.ok) { const d = await r.json(); setConvos(d.conversations || []); }
+    try {
+      const r = await fetch('/api/conversations');
+      if (r.ok) {
+        const d = await r.json();
+        setConvos(Array.isArray(d.conversations) ? d.conversations : []);
+      }
+    } catch {}
   }, []);
 
   // Fetch rooms
   const fetchRooms = useCallback(async () => {
-    const r = await fetch('/api/rooms');
-    if (r.ok) { const d = await r.json(); setRooms(d.rooms || []); }
+    try {
+      const r = await fetch('/api/rooms');
+      if (r.ok) {
+        const d = await r.json();
+        setRooms(Array.isArray(d.rooms) ? d.rooms : []);
+      }
+    } catch {}
   }, []);
 
   // Fetch people
   const fetchPeople = useCallback(async () => {
-    const r = await fetch('/api/users');
-    if (r.ok) { const d = await r.json(); setPeople(d.users || []); }
+    try {
+      const r = await fetch('/api/users');
+      if (r.ok) {
+        const d = await r.json();
+        setPeople(Array.isArray(d.users) ? d.users : []);
+      }
+    } catch {}
   }, []);
 
-  useEffect(() => { fetchConvos(); fetchRooms(); fetchPeople(); }, [fetchConvos, fetchRooms, fetchPeople]);
-
-  // Poll every 5s
   useEffect(() => {
-    const iv = setInterval(() => { fetchConvos(); fetchRooms(); }, 5000);
+    fetchConvos();
+    fetchRooms();
+    fetchPeople();
+  }, [fetchConvos, fetchRooms, fetchPeople]);
+
+  // Background polling every 4 seconds
+  useEffect(() => {
+    const iv = setInterval(() => {
+      fetchConvos();
+      fetchRooms();
+    }, 4000);
     return () => clearInterval(iv);
   }, [fetchConvos, fetchRooms]);
 
   async function startDM(username: string) {
-    const res = await fetch('/api/conversations', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ otherUsername: username }),
-    });
-    if (res.ok) {
-      const d = await res.json();
-      fetchConvos();
-      router.push(`/chat/${d.conversation.id}`);
-      setSidebarOpen(false);
-      setTab('dms');
+    try {
+      const res = await fetch('/api/conversations', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ otherUsername: username }),
+      });
+      if (res.ok) {
+        const d = await res.json();
+        fetchConvos();
+        router.push(`/chat/${d.conversation.id}`);
+        setSidebarOpen(false);
+        setTab('dms');
+      }
+    } catch (e) {
+      console.error('startDM error:', e);
     }
   }
 
@@ -98,45 +144,52 @@ export default function ChatLayout({ children }: { children: React.ReactNode }) 
     e.preventDefault();
     if (!newRoomName.trim()) return;
     setCreating(true);
-    const res = await fetch('/api/rooms', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: newRoomName, description: newRoomDesc }),
-    });
-    if (res.ok) {
-      const d = await res.json();
-      fetchRooms();
-      setShowNewRoom(false);
-      setNewRoomName(''); setNewRoomDesc('');
-      router.push(`/chat/rooms/${d.room.id}`);
-      setSidebarOpen(false);
+    try {
+      const res = await fetch('/api/rooms', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: newRoomName.trim(), description: newRoomDesc.trim() }),
+      });
+      if (res.ok) {
+        const d = await res.json();
+        fetchRooms();
+        setShowNewRoom(false);
+        setNewRoomName('');
+        setNewRoomDesc('');
+        router.push(`/chat/rooms/${d.room.id}`);
+        setSidebarOpen(false);
+      }
+    } finally {
+      setCreating(false);
     }
-    setCreating(false);
   }
 
   async function logout() {
-    await fetch('/api/auth/logout', { method: 'POST' });
-    router.push('/auth/login');
+    try {
+      await fetch('/api/auth/logout', { method: 'POST' });
+    } finally {
+      window.location.href = '/auth/login';
+    }
   }
 
   function otherParticipant(conv: Conversation): string {
-    return conv.participants.find(p => p !== me?.username) || conv.participants[0];
+    return conv.participants.find(p => p !== me?.username) || conv.participants[0] || 'Unknown';
   }
 
   const filteredConvos = convos.filter(c => {
     const other = otherParticipant(c);
     const person = people.find(p => p.username === other);
-    return !search || other.includes(search.toLowerCase()) || person?.displayName.toLowerCase().includes(search.toLowerCase());
-  }).sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+    return !search || other.toLowerCase().includes(search.toLowerCase()) || (person?.displayName && person.displayName.toLowerCase().includes(search.toLowerCase()));
+  }).sort((a, b) => new Date(b.updatedAt || 0).getTime() - new Date(a.updatedAt || 0).getTime());
 
   const filteredRooms = rooms.filter(r => !search || r.name.toLowerCase().includes(search.toLowerCase()));
-  const filteredPeople = people.filter(p => p.username !== me?.username && (!search || p.username.includes(search.toLowerCase()) || p.displayName.toLowerCase().includes(search.toLowerCase())));
+  const filteredPeople = people.filter(p => p.username !== me?.username && (!search || p.username.toLowerCase().includes(search.toLowerCase()) || p.displayName.toLowerCase().includes(search.toLowerCase())));
 
   return (
     <div className="app-shell">
       {/* Sidebar overlay for mobile */}
       {sidebarOpen && (
-        <div onClick={() => setSidebarOpen(false)} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 49 }} />
+        <div onClick={() => setSidebarOpen(false)} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 49 }} />
       )}
 
       {/* Sidebar */}
@@ -144,12 +197,12 @@ export default function ChatLayout({ children }: { children: React.ReactNode }) 
         {/* Header */}
         <div className="sidebar-header">
           <span className="sidebar-brand">NON<span>CHAT</span></span>
-          <div style={{ display: 'flex', gap: 4 }}>
+          <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
             {tab === 'rooms' && (
-              <button id="new-room-btn" className="btn btn-icon btn-ghost" onClick={() => setShowNewRoom(true)} title="New Room">＋</button>
+              <button id="new-room-btn" className="btn btn-icon btn-ghost" onClick={() => setShowNewRoom(true)} title="New Room" style={{ fontSize: 18 }}>＋</button>
             )}
             <Link href="/profile">
-              <button className="btn btn-icon btn-ghost" title="Profile" id="profile-btn">👤</button>
+              <button className="btn btn-icon btn-ghost" title="Profile" id="profile-btn" style={{ fontSize: 16 }}>👤</button>
             </Link>
           </div>
         </div>
@@ -180,7 +233,7 @@ export default function ChatLayout({ children }: { children: React.ReactNode }) 
             filteredConvos.length === 0
               ? <div className="empty-state" style={{ padding: '40px 16px' }}>
                   <div className="empty-state-icon">💬</div>
-                  <p className="empty-state-sub">No conversations yet.<br />Find people to start chatting.</p>
+                  <p className="empty-state-sub">No conversations yet.<br />Go to People to start chatting.</p>
                 </div>
               : filteredConvos.map(conv => {
                   const other = otherParticipant(conv);
@@ -211,7 +264,7 @@ export default function ChatLayout({ children }: { children: React.ReactNode }) 
                   return (
                     <div key={room.id} id={`room-${room.id}`} className={`sidebar-item ${isActive ? 'active' : ''}`}
                       onClick={() => { router.push(`/chat/rooms/${room.id}`); setSidebarOpen(false); }}>
-                      <div className="avatar" style={{ width: 40, height: 40, background: '#2c2c2e', borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 20 }}>
+                      <div className="avatar" style={{ width: 40, height: 40, background: '#2c2c2e', borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18, color: 'var(--text-secondary)' }}>
                         #
                       </div>
                       <div className="sidebar-item-info">
@@ -227,7 +280,7 @@ export default function ChatLayout({ children }: { children: React.ReactNode }) 
             filteredPeople.length === 0
               ? <div className="empty-state" style={{ padding: '40px 16px' }}>
                   <div className="empty-state-icon">👥</div>
-                  <p className="empty-state-sub">No users found.</p>
+                  <p className="empty-state-sub">No other users registered yet.</p>
                 </div>
               : filteredPeople.map(person => (
                   <div key={person.username} id={`person-${person.username}`} className="sidebar-item"
@@ -254,10 +307,8 @@ export default function ChatLayout({ children }: { children: React.ReactNode }) 
         )}
       </aside>
 
-      {/* Main */}
+      {/* Main Content Area */}
       <main className="chat-main">
-        {/* Mobile header toggle */}
-        <div style={{ display: 'none' }} id="mobile-header" />
         {children}
       </main>
 
@@ -275,7 +326,7 @@ export default function ChatLayout({ children }: { children: React.ReactNode }) 
                 <label htmlFor="room-desc-input">Description</label>
                 <input id="room-desc-input" value={newRoomDesc} onChange={e => setNewRoomDesc(e.target.value)} placeholder="Optional" maxLength={100} />
               </div>
-              <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+              <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
                 <button type="button" className="btn btn-secondary flex-1" onClick={() => setShowNewRoom(false)}>Cancel</button>
                 <button id="create-room-submit" type="submit" className="btn btn-primary flex-1" disabled={creating || !newRoomName.trim()}>
                   {creating ? <span className="spinner" /> : 'Create'}

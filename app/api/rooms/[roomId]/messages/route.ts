@@ -8,7 +8,8 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ room
   const { roomId } = await params;
   try {
     const result = await getJSON<Message[]>('msgs', `rooms/${roomId}/messages.json`);
-    return NextResponse.json({ messages: result?.data || [] });
+    const messages = Array.isArray(result?.data) ? result.data : [];
+    return NextResponse.json({ messages });
   } catch {
     return NextResponse.json({ messages: [] });
   }
@@ -21,7 +22,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ roo
   const { roomId } = await params;
 
   try {
-    const body = await req.json();
+    const body = await req.json().catch(() => ({}));
     const { content, mediaUrl, mediaType, mediaName, mediaSize } = body;
 
     if (!content && !mediaUrl) {
@@ -45,14 +46,14 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ roo
     };
 
     const existing = await getJSON<Message[]>('msgs', `rooms/${roomId}/messages.json`);
-    const messages = existing?.data || [];
+    const messages = Array.isArray(existing?.data) ? existing.data : [];
     messages.push(message);
 
     await putJSON('msgs', `rooms/${roomId}/messages.json`, messages, `Room msg: ${roomId}`, existing?.sha);
 
     return NextResponse.json({ message }, { status: 201 });
-  } catch (err) {
+  } catch (err: any) {
     console.error('Room message error:', err);
-    return NextResponse.json({ error: 'Failed to send message' }, { status: 500 });
+    return NextResponse.json({ error: err.message || 'Failed to send message' }, { status: 500 });
   }
 }

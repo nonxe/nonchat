@@ -12,7 +12,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ conv
 
   try {
     const result = await getJSON<Message[]>('msgs', `conversations/${convId}/messages.json`);
-    const messages = result?.data || [];
+    const messages = Array.isArray(result?.data) ? result.data : [];
     return NextResponse.json({ messages });
   } catch {
     return NextResponse.json({ messages: [] });
@@ -26,7 +26,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ con
   const { convId } = await params;
 
   try {
-    const body = await req.json();
+    const body = await req.json().catch(() => ({}));
     const { content, mediaUrl, mediaType, mediaName, mediaSize } = body;
 
     if (!content && !mediaUrl) {
@@ -51,7 +51,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ con
 
     // Load existing messages
     const existing = await getJSON<Message[]>('msgs', `conversations/${convId}/messages.json`);
-    const messages = existing?.data || [];
+    const messages = Array.isArray(existing?.data) ? existing.data : [];
     messages.push(message);
 
     await putJSON(
@@ -62,20 +62,24 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ con
       existing?.sha
     );
 
-    // Update conversation metadata
-    const indexFile = await getJSON<Conversation[]>('msgs', 'conversations/index.json');
-    if (indexFile) {
-      const index = indexFile.data.map((c) =>
-        c.id === convId
-          ? { ...c, lastMessage: content || `[${mediaType}]`, lastMessageAt: now, updatedAt: now }
-          : c
-      );
-      await putJSON('msgs', 'conversations/index.json', index, `Update conv meta: ${convId}`, indexFile.sha);
+    // Update conversation metadata in index
+    try {
+      const indexFile = await getJSON<Conversation[]>('msgs', 'conversations/index.json');
+      if (indexFile && Array.isArray(indexFile.data)) {
+        const index = indexFile.data.map((c) =>
+          c.id === convId
+            ? { ...c, lastMessage: content || `[${mediaType}]`, lastMessageAt: now, updatedAt: now }
+            : c
+        );
+        await putJSON('msgs', 'conversations/index.json', index, `Update conv meta: ${convId}`, indexFile.sha);
+      }
+    } catch (indexErr) {
+      console.warn('Index update warning:', indexErr);
     }
 
     return NextResponse.json({ message }, { status: 201 });
-  } catch (err) {
+  } catch (err: any) {
     console.error('Send message error:', err);
-    return NextResponse.json({ error: 'Failed to send message' }, { status: 500 });
+    return NextResponse.json({ error: err.message || 'Failed to send message' }, { status: 500 });
   }
 }

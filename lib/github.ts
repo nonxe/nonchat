@@ -73,11 +73,11 @@ export async function getJSON<T>(
   try {
     return { data: JSON.parse(file.content) as T, sha: file.sha };
   } catch {
-    throw new Error(`Failed to parse JSON at ${path}: ${file.content.slice(0, 200)}`);
+    return null;
   }
 }
 
-/** PUT (create or update) a file in a repo */
+/** PUT (create or update) a file in a repo with automatic SHA resolution and conflict retry */
 export async function putFile(
   repo: RepoKey,
   path: string,
@@ -91,8 +91,20 @@ export async function putFile(
   const url = `${BASE_URL}/repos/${owner}/${repoName}/contents/${encodeURIComponent(cleanPath).replace(/%2F/g, '/')}`;
   const encoded = Buffer.from(content, 'utf-8').toString('base64');
 
+  let fileSha = sha;
+  if (!fileSha) {
+    try {
+      const existing = await getFile(repo, cleanPath);
+      if (existing?.sha) {
+        fileSha = existing.sha;
+      }
+    } catch {
+      // Not found, will create new file
+    }
+  }
+
   const body: Record<string, string> = { message, content: encoded };
-  if (sha) body.sha = sha;
+  if (fileSha) body.sha = fileSha;
 
   const res = await fetch(url, {
     method: 'PUT',
@@ -102,6 +114,22 @@ export async function putFile(
   });
 
   if (!res.ok) {
+    // If conflict or missing sha, retry once with fresh sha lookup
+    if (res.status === 409 || res.status === 422) {
+      try {
+        const fresh = await getFile(repo, cleanPath);
+        if (fresh?.sha) {
+          body.sha = fresh.sha;
+          const retryRes = await fetch(url, {
+            method: 'PUT',
+            headers,
+            body: JSON.stringify(body),
+            cache: 'no-store',
+          });
+          if (retryRes.ok) return;
+        }
+      } catch {}
+    }
     const text = await res.text();
     throw new Error(`GitHub PUT ${repoName}/${cleanPath} failed (${res.status}): ${text}`);
   }

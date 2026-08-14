@@ -1,21 +1,29 @@
 'use client';
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { useParams, useRouter } from 'next/navigation';
+import { useParams } from 'next/navigation';
 import type { Message, PublicUser } from '@/lib/types';
 
 interface Me { username: string; displayName: string; avatarUrl: string | null; }
 
 function formatTime(iso: string) {
-  return new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  try {
+    return new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  } catch {
+    return '';
+  }
 }
 
 function formatDay(iso: string) {
-  const d = new Date(iso);
-  const today = new Date();
-  if (d.toDateString() === today.toDateString()) return 'Today';
-  const yest = new Date(); yest.setDate(today.getDate() - 1);
-  if (d.toDateString() === yest.toDateString()) return 'Yesterday';
-  return d.toLocaleDateString([], { weekday: 'long', month: 'short', day: 'numeric' });
+  try {
+    const d = new Date(iso);
+    const today = new Date();
+    if (d.toDateString() === today.toDateString()) return 'Today';
+    const yest = new Date(); yest.setDate(today.getDate() - 1);
+    if (d.toDateString() === yest.toDateString()) return 'Yesterday';
+    return d.toLocaleDateString([], { weekday: 'long', month: 'short', day: 'numeric' });
+  } catch {
+    return 'Today';
+  }
 }
 
 function formatSize(bytes: number) {
@@ -25,9 +33,9 @@ function formatSize(bytes: number) {
 }
 
 function Avatar({ name, src, size = 28 }: { name: string; src?: string | null; size?: number }) {
-  const initials = name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
+  const initials = (name || 'U').split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
   const colors = ['#0a84ff','#30d158','#ff9f0a','#bf5af2','#ff453a','#64d2ff'];
-  const color = colors[name.charCodeAt(0) % colors.length];
+  const color = colors[(name || 'U').charCodeAt(0) % colors.length];
   return (
     <div className="avatar" style={{ width: size, height: size, minWidth: size, borderRadius: '50%' }}>
       {src ? <img src={src} alt={name} /> : (
@@ -94,7 +102,6 @@ function BubbleContent({ msg, isOut }: { msg: Message; isOut: boolean }) {
 
 export default function ConversationPage() {
   const { convId } = useParams<{ convId: string }>();
-  const router = useRouter();
   const [me, setMe] = useState<Me | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [other, setOther] = useState<PublicUser | null>(null);
@@ -103,59 +110,65 @@ export default function ConversationPage() {
   const [uploadFile, setUploadFile] = useState<File | null>(null);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [uploading, setUploading] = useState(false);
-  const [sidebarOpen, setSidebarOpen] = useState(false);
   const [optimisticMsgs, setOptimisticMsgs] = useState<Message[]>([]);
   const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
-  // Get me
+  // Get current logged-in user
   useEffect(() => {
-    fetch('/api/auth/me').then(r => r.json()).then(d => {
-      if (d.user) setMe(d.user);
-      else router.push('/auth/login');
-    });
-  }, [router]);
+    fetch('/api/auth/me')
+      .then(r => r.ok ? r.json() : null)
+      .then(d => {
+        if (d?.user) setMe(d.user);
+      });
+  }, []);
 
-  // Get conversation meta
+  // Get other user info
   useEffect(() => {
-    if (!me) return;
-    fetch('/api/conversations').then(r => r.json()).then(d => {
-      const conv = (d.conversations || []).find((c: any) => c.id === convId);
-      if (conv) {
-        const otherUsername = conv.participants.find((p: string) => p !== me.username);
-        if (otherUsername) {
-          fetch(`/api/users/${otherUsername}`).then(r => r.json()).then(ud => {
-            if (ud.user) setOther(ud.user as PublicUser);
-          });
+    if (!me || !convId) return;
+    fetch('/api/conversations')
+      .then(r => r.ok ? r.json() : null)
+      .then(d => {
+        const conv = (d?.conversations || []).find((c: any) => c.id === convId);
+        if (conv) {
+          const otherUsername = conv.participants.find((p: string) => p !== me.username);
+          if (otherUsername) {
+            fetch(`/api/users/${otherUsername}`)
+              .then(r => r.ok ? r.json() : null)
+              .then(ud => {
+                if (ud?.user) setOther(ud.user as PublicUser);
+              });
+          }
         }
-      }
-    });
+      });
   }, [me, convId]);
 
   const fetchMessages = useCallback(async () => {
-    const r = await fetch(`/api/conversations/${convId}/messages`);
-    if (r.ok) {
-      const d = await r.json();
-      setMessages(d.messages || []);
-      setOptimisticMsgs([]);
-    }
+    if (!convId) return;
+    try {
+      const r = await fetch(`/api/conversations/${convId}/messages`);
+      if (r.ok) {
+        const d = await r.json();
+        setMessages(Array.isArray(d.messages) ? d.messages : []);
+        setOptimisticMsgs([]);
+      }
+    } catch {}
   }, [convId]);
 
   useEffect(() => { fetchMessages(); }, [fetchMessages]);
 
-  // Poll every 3s
+  // Poll for new messages every 3s
   useEffect(() => {
     const iv = setInterval(fetchMessages, 3000);
     return () => clearInterval(iv);
   }, [fetchMessages]);
 
-  // Auto-scroll
+  // Auto-scroll to bottom on new messages
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, optimisticMsgs]);
 
-  // Auto-resize textarea
   function handleTextChange(e: React.ChangeEvent<HTMLTextAreaElement>) {
     setText(e.target.value);
     e.target.style.height = 'auto';
@@ -163,17 +176,16 @@ export default function ConversationPage() {
   }
 
   async function send() {
-    if ((!text.trim() && !uploadFile) || sending || uploading) return;
+    if ((!text.trim() && !uploadFile) || sending || uploading || !me) return;
     setSending(true);
 
-    // Optimistic message
     const now = new Date().toISOString();
     const optimistic: Message = {
       id: `opt-${Date.now()}`,
       conversationId: convId,
-      senderId: me!.username,
-      senderName: me!.displayName,
-      senderAvatar: me!.avatarUrl,
+      senderId: me.username,
+      senderName: me.displayName,
+      senderAvatar: me.avatarUrl,
       content: text.trim() || null,
       mediaUrl: null,
       mediaType: null,
@@ -194,8 +206,7 @@ export default function ConversationPage() {
         setUploading(true);
         const fd = new FormData();
         fd.append('file', uploadFile);
-        // Fake progress
-        const prog = setInterval(() => setUploadProgress(p => Math.min(p + 10, 85)), 200);
+        const prog = setInterval(() => setUploadProgress(p => Math.min(p + 15, 90)), 200);
         const upRes = await fetch('/api/upload', { method: 'POST', body: fd });
         clearInterval(prog);
         setUploadProgress(100);
@@ -232,14 +243,13 @@ export default function ConversationPage() {
   function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
-    if (file.size > 15 * 1024 * 1024) { alert('File too large. Maximum 15MB.'); return; }
+    if (file.size > 15 * 1024 * 1024) { alert('File too large. Maximum 15MB allowed.'); return; }
     setUploadFile(file);
     e.target.value = '';
   }
 
   const allMessages = [...messages, ...optimisticMsgs];
 
-  // Group by day
   const grouped: { day: string; msgs: Message[] }[] = [];
   allMessages.forEach(msg => {
     const day = formatDay(msg.timestamp);
@@ -252,10 +262,9 @@ export default function ConversationPage() {
     <>
       {/* Chat header */}
       <div className="chat-header">
-        <button className="menu-toggle" onClick={() => setSidebarOpen(true)} id="sidebar-toggle-conv">☰</button>
         {other ? (
           <>
-            <Avatar name={other.displayName} src={other.avatarUrl} size={36} />
+            <Avatar name={other.displayName} src={other.avatarUrl} size={38} />
             <div className="chat-header-info">
               <div className="chat-header-name">{other.displayName}</div>
               <div className="chat-header-sub" style={{ color: other.status === 'online' ? 'var(--accent-green)' : 'var(--text-secondary)' }}>
@@ -264,17 +273,17 @@ export default function ConversationPage() {
             </div>
           </>
         ) : (
-          <div className="chat-header-name" style={{ color: 'var(--text-secondary)' }}>Loading…</div>
+          <div className="chat-header-name" style={{ color: 'var(--text-secondary)' }}>Chat</div>
         )}
       </div>
 
-      {/* Messages */}
+      {/* Messages list */}
       <div className="messages-container" id="messages-list">
         {allMessages.length === 0 && (
           <div className="empty-state" style={{ flex: 1 }}>
             <div className="empty-state-icon">👋</div>
             <div className="empty-state-title">Say hello!</div>
-            <div className="empty-state-sub">Start the conversation.</div>
+            <div className="empty-state-sub">Start the conversation with {other?.displayName || 'your friend'}.</div>
           </div>
         )}
 
@@ -306,9 +315,8 @@ export default function ConversationPage() {
         <div ref={bottomRef} />
       </div>
 
-      {/* Input Area */}
+      {/* Input area */}
       <div className="input-area">
-        {/* Upload preview */}
         {uploadFile && (
           <div className="upload-preview">
             {uploadFile.type.startsWith('image/') && (
@@ -361,9 +369,6 @@ export default function ConversationPage() {
           </div>
         </div>
       </div>
-
-      {/* Mobile sidebar hack */}
-      <style>{`.sidebar { ${sidebarOpen ? 'transform: translateX(0)' : ''} }`}</style>
     </>
   );
 }

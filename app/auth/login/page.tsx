@@ -1,10 +1,8 @@
 'use client';
 import { useState } from 'react';
-import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 
 export default function LoginPage() {
-  const router = useRouter();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -23,13 +21,13 @@ export default function LoginPage() {
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         setError(data.error || data.detail || 'Invalid username or password');
+        setLoading(false);
         return;
       }
-      router.push('/chat');
-      router.refresh();
+      // Hard redirect to ensure auth cookie is loaded by server components
+      window.location.href = '/chat';
     } catch (err: any) {
       setError('Network error: ' + (err.message || 'Please try again.'));
-    } finally {
       setLoading(false);
     }
   }
