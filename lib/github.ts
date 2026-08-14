@@ -1,100 +1,99 @@
-const GITHUB_TOKEN = process.env.GITHUB_TOKEN!;
-const OWNER = process.env.GITHUB_OWNER || 'nonxe';
 const BASE_URL = 'https://api.github.com';
 
-const REPOS = {
-  users: process.env.GITHUB_REPO_USERS || 'userdb',
-  msgs: process.env.GITHUB_REPO_MSGS || 'msgdb',
-  system: process.env.GITHUB_REPO_SYSTEM || 'systemdb',
-} as const;
-
-const headers = {
-  Authorization: `token ${GITHUB_TOKEN}`,
-  Accept: 'application/vnd.github.v3+json',
-  'Content-Type': 'application/json',
-};
-
-// In-memory cache to reduce API calls
-const cache = new Map<string, { data: unknown; etag: string; ts: number }>();
-const CACHE_TTL = 3000; // 3 seconds
-
-async function githubFetch(url: string, options?: RequestInit): Promise<Response> {
-  return fetch(url, { ...options, headers: { ...headers, ...(options?.headers || {}) } });
+function getConfig() {
+  const token = process.env.GITHUB_TOKEN;
+  const owner = process.env.GITHUB_OWNER || 'nonxe';
+  if (!token) throw new Error('GITHUB_TOKEN environment variable is not set');
+  return {
+    token,
+    owner,
+    repos: {
+      users: process.env.GITHUB_REPO_USERS || 'userdb',
+      msgs:  process.env.GITHUB_REPO_MSGS  || 'msgdb',
+      system:process.env.GITHUB_REPO_SYSTEM|| 'systemdb',
+    } as const,
+    headers: {
+      Authorization: `token ${token}`,
+      Accept: 'application/vnd.github.v3+json',
+      'Content-Type': 'application/json',
+    },
+  };
 }
+
+type RepoKey = 'users' | 'msgs' | 'system';
 
 /** GET a file's content from a repo. Returns { content, sha } or null if not found */
 export async function getFile(
-  repo: keyof typeof REPOS,
+  repo: RepoKey,
   path: string
 ): Promise<{ content: string; sha: string } | null> {
-  const repoName = REPOS[repo];
-  const url = `${BASE_URL}/repos/${OWNER}/${repoName}/contents/${path}`;
-  const cacheKey = `${repo}:${path}`;
-  const cached = cache.get(cacheKey);
+  const { token, owner, repos, headers } = getConfig();
+  const repoName = repos[repo];
+  const url = `${BASE_URL}/repos/${owner}/${repoName}/contents/${encodeURIComponent(path).replace(/%2F/g, '/')}`;
 
-  const reqHeaders: Record<string, string> = { ...headers };
-  if (cached && Date.now() - cached.ts < CACHE_TTL) {
-    reqHeaders['If-None-Match'] = cached.etag;
-  }
-
-  const res = await fetch(url, { headers: reqHeaders, cache: 'no-store' });
-
-  if (res.status === 304 && cached) {
-    return cached.data as { content: string; sha: string };
-  }
+  const res = await fetch(url, {
+    headers,
+    cache: 'no-store',
+    next: { revalidate: 0 },
+  });
 
   if (res.status === 404) return null;
-  if (!res.ok) throw new Error(`GitHub GET failed: ${res.status} ${await res.text()}`);
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`GitHub GET ${path} failed: ${res.status} — ${text}`);
+  }
 
   const json = await res.json();
   const content = Buffer.from(json.content, 'base64').toString('utf-8');
-  const etag = res.headers.get('etag') || '';
-  const result = { content, sha: json.sha };
-
-  cache.set(cacheKey, { data: result, etag, ts: Date.now() });
-  return result;
+  return { content, sha: json.sha };
 }
 
 /** GET parsed JSON from a repo file */
 export async function getJSON<T>(
-  repo: keyof typeof REPOS,
+  repo: RepoKey,
   path: string
 ): Promise<{ data: T; sha: string } | null> {
   const file = await getFile(repo, path);
   if (!file) return null;
-  return { data: JSON.parse(file.content) as T, sha: file.sha };
+  try {
+    return { data: JSON.parse(file.content) as T, sha: file.sha };
+  } catch {
+    throw new Error(`Failed to parse JSON at ${path}: ${file.content.slice(0, 200)}`);
+  }
 }
 
 /** PUT (create or update) a file in a repo */
 export async function putFile(
-  repo: keyof typeof REPOS,
+  repo: RepoKey,
   path: string,
   content: string,
   message: string,
   sha?: string
 ): Promise<void> {
-  const repoName = REPOS[repo];
-  const url = `${BASE_URL}/repos/${OWNER}/${repoName}/contents/${path}`;
+  const { owner, repos, headers } = getConfig();
+  const repoName = repos[repo];
+  const url = `${BASE_URL}/repos/${owner}/${repoName}/contents/${encodeURIComponent(path).replace(/%2F/g, '/')}`;
   const encoded = Buffer.from(content, 'utf-8').toString('base64');
 
   const body: Record<string, string> = { message, content: encoded };
   if (sha) body.sha = sha;
 
-  const res = await githubFetch(url, {
+  const res = await fetch(url, {
     method: 'PUT',
+    headers,
     body: JSON.stringify(body),
+    cache: 'no-store',
   });
 
-  if (!res.ok) throw new Error(`GitHub PUT failed: ${res.status} ${await res.text()}`);
-
-  // Invalidate cache
-  const cacheKey = `${repo}:${path}`;
-  cache.delete(cacheKey);
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`GitHub PUT ${path} failed: ${res.status} — ${text}`);
+  }
 }
 
 /** PUT JSON object to a repo file */
 export async function putJSON<T>(
-  repo: keyof typeof REPOS,
+  repo: RepoKey,
   path: string,
   data: T,
   message: string,
@@ -105,32 +104,38 @@ export async function putJSON<T>(
 
 /** Delete a file from a repo */
 export async function deleteFile(
-  repo: keyof typeof REPOS,
+  repo: RepoKey,
   path: string,
   sha: string,
   message: string
 ): Promise<void> {
-  const repoName = REPOS[repo];
-  const url = `${BASE_URL}/repos/${OWNER}/${repoName}/contents/${path}`;
+  const { owner, repos, headers } = getConfig();
+  const repoName = repos[repo];
+  const url = `${BASE_URL}/repos/${owner}/${repoName}/contents/${encodeURIComponent(path).replace(/%2F/g, '/')}`;
 
-  const res = await githubFetch(url, {
+  const res = await fetch(url, {
     method: 'DELETE',
+    headers,
     body: JSON.stringify({ message, sha }),
+    cache: 'no-store',
   });
 
-  if (!res.ok) throw new Error(`GitHub DELETE failed: ${res.status} ${await res.text()}`);
-  cache.delete(`${repo}:${path}`);
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`GitHub DELETE ${path} failed: ${res.status} — ${text}`);
+  }
 }
 
-/** List files in a directory */
+/** List directory contents */
 export async function listDir(
-  repo: keyof typeof REPOS,
+  repo: RepoKey,
   path: string
 ): Promise<Array<{ name: string; path: string; sha: string; type: 'file' | 'dir' }> | null> {
-  const repoName = REPOS[repo];
-  const url = `${BASE_URL}/repos/${OWNER}/${repoName}/contents/${path}`;
-  const res = await githubFetch(url, { cache: 'no-store' });
+  const { owner, repos, headers } = getConfig();
+  const repoName = repos[repo];
+  const url = `${BASE_URL}/repos/${owner}/${repoName}/contents/${encodeURIComponent(path).replace(/%2F/g, '/')}`;
+  const res = await fetch(url, { headers, cache: 'no-store' });
   if (res.status === 404) return null;
-  if (!res.ok) throw new Error(`GitHub LIST failed: ${res.status}`);
+  if (!res.ok) throw new Error(`GitHub LIST ${path} failed: ${res.status}`);
   return res.json();
 }

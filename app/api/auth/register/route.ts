@@ -3,7 +3,7 @@ import { getJSON, putJSON } from '@/lib/github';
 import { hashPassword } from '@/lib/crypto';
 import { signToken, createAuthCookie } from '@/lib/auth';
 import type { UserWithHash, PublicUser } from '@/lib/types';
-import { v4 as uuidv4 } from 'uuid';
+
 
 export async function POST(req: NextRequest) {
   try {
@@ -70,7 +70,11 @@ export async function POST(req: NextRequest) {
     response.headers.set('Set-Cookie', createAuthCookie(token));
     return response;
   } catch (err) {
-    console.error('Register error:', err);
-    return NextResponse.json({ error: 'Registration failed' }, { status: 500 });
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error('Register error:', msg);
+    return NextResponse.json(
+      { error: 'Registration failed', detail: msg },
+      { status: 500 }
+    );
   }
 }
