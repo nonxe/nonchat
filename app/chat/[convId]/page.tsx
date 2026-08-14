@@ -1,6 +1,6 @@
 'use client';
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { useParams } from 'next/navigation';
+import { useParams, useRouter } from 'next/navigation';
 import type { Message, PublicUser } from '@/lib/types';
 
 interface Me { username: string; displayName: string; avatarUrl: string | null; }
@@ -102,6 +102,7 @@ function BubbleContent({ msg, isOut }: { msg: Message; isOut: boolean }) {
 
 export default function ConversationPage() {
   const { convId } = useParams<{ convId: string }>();
+  const router = useRouter();
   const [me, setMe] = useState<Me | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [other, setOther] = useState<PublicUser | null>(null);
@@ -262,6 +263,15 @@ export default function ConversationPage() {
     <>
       {/* Chat header */}
       <div className="chat-header">
+        <button
+          className="btn btn-icon btn-ghost mobile-back-btn"
+          onClick={() => router.push('/chat')}
+          title="Back to chats"
+          style={{ fontSize: 18, color: 'var(--accent)', marginRight: 2 }}
+        >
+          ←
+        </button>
+
         {other ? (
           <>
             <Avatar name={other.displayName} src={other.avatarUrl} size={38} />
@@ -270,6 +280,11 @@ export default function ConversationPage() {
               <div className="chat-header-sub" style={{ color: other.status === 'online' ? 'var(--accent-green)' : 'var(--text-secondary)' }}>
                 {other.status === 'online' ? '● Active now' : '○ Offline'}
               </div>
+            </div>
+            {/* Action buttons */}
+            <div style={{ display: 'flex', gap: 6 }}>
+              <button className="btn btn-icon btn-ghost" title="Search in chat" style={{ fontSize: 16 }}>🔍</button>
+              <button className="btn btn-icon btn-ghost" title="User Details" style={{ fontSize: 16 }}>ℹ️</button>
             </div>
           </>
         ) : (
@@ -339,7 +354,7 @@ export default function ConversationPage() {
 
         <div className="input-row">
           <input ref={fileRef} type="file" accept="image/*,video/*,.pdf,.doc,.docx,.zip,.txt" style={{ display: 'none' }} id="file-input" onChange={handleFileChange} />
-          <button className="input-btn" onClick={() => fileRef.current?.click()} id="attach-btn" title="Attach file">
+          <button className="input-btn" onClick={() => fileRef.current?.click()} id="attach-btn" title="Attach photo or document">
             📎
           </button>
           <textarea
@@ -349,7 +364,7 @@ export default function ConversationPage() {
             value={text}
             onChange={handleTextChange}
             onKeyDown={handleKey}
-            placeholder="Message…"
+            placeholder="iMessage…"
             rows={1}
           />
           <div className="input-actions">

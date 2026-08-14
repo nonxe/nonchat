@@ -3,6 +3,8 @@ import { useState, useEffect, useCallback } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import Link from 'next/link';
 import type { Conversation, Room, PublicUser } from '@/lib/types';
+import NewChatModal from '@/components/NewChatModal';
+import SettingsModal from '@/components/SettingsModal';
 
 interface Me { username: string; displayName: string; avatarUrl: string | null; }
 
@@ -44,6 +46,8 @@ export default function ChatLayout({ children }: { children: React.ReactNode }) 
   const [people, setPeople] = useState<PublicUser[]>([]);
   const [search, setSearch] = useState('');
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [showNewChat, setShowNewChat] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
   const [showNewRoom, setShowNewRoom] = useState(false);
   const [newRoomName, setNewRoomName] = useState('');
   const [newRoomDesc, setNewRoomDesc] = useState('');
@@ -196,14 +200,42 @@ export default function ChatLayout({ children }: { children: React.ReactNode }) 
       <aside className={`sidebar ${sidebarOpen ? 'open' : ''}`}>
         {/* Header */}
         <div className="sidebar-header">
-          <span className="sidebar-brand">NON<span>CHAT</span></span>
-          <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span className="sidebar-brand">NON<span>CHAT</span></span>
+          </div>
+          <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+            {/* New Chat Button */}
+            <button
+              id="new-chat-btn"
+              className="btn btn-icon btn-ghost"
+              onClick={() => setShowNewChat(true)}
+              title="New Chat / Search Username"
+              style={{ fontSize: 16, color: 'var(--accent)' }}
+            >
+              ✏️
+            </button>
+            {/* New Room Button */}
             {tab === 'rooms' && (
-              <button id="new-room-btn" className="btn btn-icon btn-ghost" onClick={() => setShowNewRoom(true)} title="New Room" style={{ fontSize: 18 }}>＋</button>
+              <button
+                id="new-room-btn"
+                className="btn btn-icon btn-ghost"
+                onClick={() => setShowNewRoom(true)}
+                title="New Room"
+                style={{ fontSize: 18 }}
+              >
+                ＋
+              </button>
             )}
-            <Link href="/profile">
-              <button className="btn btn-icon btn-ghost" title="Profile" id="profile-btn" style={{ fontSize: 16 }}>👤</button>
-            </Link>
+            {/* Settings Gear */}
+            <button
+              id="settings-btn"
+              className="btn btn-icon btn-ghost"
+              onClick={() => setShowSettings(true)}
+              title="Settings & Profile"
+              style={{ fontSize: 16 }}
+            >
+              ⚙️
+            </button>
           </div>
         </div>
 
@@ -212,7 +244,7 @@ export default function ChatLayout({ children }: { children: React.ReactNode }) 
           <input
             id="sidebar-search"
             type="search"
-            placeholder={tab === 'dms' ? 'Search messages…' : tab === 'rooms' ? 'Search rooms…' : 'Find people…'}
+            placeholder={tab === 'dms' ? 'Search messages & users…' : tab === 'rooms' ? 'Search rooms…' : 'Find people…'}
             value={search}
             onChange={e => setSearch(e.target.value)}
           />
@@ -222,7 +254,7 @@ export default function ChatLayout({ children }: { children: React.ReactNode }) 
         <div className="sidebar-tabs">
           {(['dms','rooms','people'] as const).map(t => (
             <button key={t} id={`tab-${t}`} className={`sidebar-tab ${tab === t ? 'active' : ''}`} onClick={() => { setTab(t); setSearch(''); }}>
-              {t === 'dms' ? 'DMs' : t === 'rooms' ? 'Rooms' : 'People'}
+              {t === 'dms' ? 'Chats' : t === 'rooms' ? 'Rooms' : 'People'}
             </button>
           ))}
         </div>
@@ -233,7 +265,11 @@ export default function ChatLayout({ children }: { children: React.ReactNode }) 
             filteredConvos.length === 0
               ? <div className="empty-state" style={{ padding: '40px 16px' }}>
                   <div className="empty-state-icon">💬</div>
-                  <p className="empty-state-sub">No conversations yet.<br />Go to People to start chatting.</p>
+                  <div style={{ fontSize: 'var(--text-md)', fontWeight: 700, color: 'var(--text-primary)', marginBottom: 4 }}>No conversations yet</div>
+                  <p className="empty-state-sub" style={{ marginBottom: 12 }}>Search anyone by username to start a chat.</p>
+                  <button onClick={() => setShowNewChat(true)} className="btn btn-primary" style={{ padding: '8px 18px', fontSize: 'var(--text-xs)' }}>
+                    Start New Chat
+                  </button>
                 </div>
               : filteredConvos.map(conv => {
                   const other = otherParticipant(conv);
@@ -242,10 +278,10 @@ export default function ChatLayout({ children }: { children: React.ReactNode }) 
                   return (
                     <div key={conv.id} id={`conv-${conv.id}`} className={`sidebar-item ${isActive ? 'active' : ''}`}
                       onClick={() => { router.push(`/chat/${conv.id}`); setSidebarOpen(false); }}>
-                      <AvatarSmall name={person?.displayName || other} src={person?.avatarUrl} size={40} status={person?.status} />
+                      <AvatarSmall name={person?.displayName || other} src={person?.avatarUrl} size={42} status={person?.status || 'offline'} />
                       <div className="sidebar-item-info">
                         <div className="sidebar-item-name">{person?.displayName || other}</div>
-                        <div className="sidebar-item-preview">{conv.lastMessage || 'No messages yet'}</div>
+                        <div className="sidebar-item-preview">{conv.lastMessage || 'Tap to send a message'}</div>
                       </div>
                       {conv.lastMessageAt && <div className="sidebar-item-time">{timeAgo(conv.lastMessageAt)}</div>}
                     </div>
@@ -257,19 +293,23 @@ export default function ChatLayout({ children }: { children: React.ReactNode }) 
             filteredRooms.length === 0
               ? <div className="empty-state" style={{ padding: '40px 16px' }}>
                   <div className="empty-state-icon">🏠</div>
-                  <p className="empty-state-sub">No rooms yet.<br />Create one with ＋ above.</p>
+                  <div style={{ fontSize: 'var(--text-md)', fontWeight: 700, color: 'var(--text-primary)', marginBottom: 4 }}>No rooms yet</div>
+                  <p className="empty-state-sub" style={{ marginBottom: 12 }}>Create a public community channel.</p>
+                  <button onClick={() => setShowNewRoom(true)} className="btn btn-primary" style={{ padding: '8px 18px', fontSize: 'var(--text-xs)' }}>
+                    Create Room
+                  </button>
                 </div>
               : filteredRooms.map(room => {
                   const isActive = pathname === `/chat/rooms/${room.id}`;
                   return (
                     <div key={room.id} id={`room-${room.id}`} className={`sidebar-item ${isActive ? 'active' : ''}`}
                       onClick={() => { router.push(`/chat/rooms/${room.id}`); setSidebarOpen(false); }}>
-                      <div className="avatar" style={{ width: 40, height: 40, background: '#2c2c2e', borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18, color: 'var(--text-secondary)' }}>
+                      <div className="avatar" style={{ width: 42, height: 42, background: 'var(--bg-tertiary)', borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18, color: 'var(--accent)', fontWeight: 700 }}>
                         #
                       </div>
                       <div className="sidebar-item-info">
                         <div className="sidebar-item-name">{room.name}</div>
-                        <div className="sidebar-item-preview">{room.description || 'Public room'}</div>
+                        <div className="sidebar-item-preview">{room.description || 'Public channel'}</div>
                       </div>
                     </div>
                   );
@@ -285,23 +325,27 @@ export default function ChatLayout({ children }: { children: React.ReactNode }) 
               : filteredPeople.map(person => (
                   <div key={person.username} id={`person-${person.username}`} className="sidebar-item"
                     onClick={() => startDM(person.username)}>
-                    <AvatarSmall name={person.displayName} src={person.avatarUrl} size={40} status={person.status} />
+                    <AvatarSmall name={person.displayName} src={person.avatarUrl} size={42} status={person.status || 'offline'} />
                     <div className="sidebar-item-info">
                       <div className="sidebar-item-name">{person.displayName}</div>
                       <div className="sidebar-item-preview">@{person.username}</div>
                     </div>
+                    <button className="btn btn-ghost" style={{ fontSize: 12, color: 'var(--accent)', padding: '4px 8px' }}>Chat</button>
                   </div>
                 ))
           )}
         </div>
 
-        {/* Footer */}
+        {/* Footer with User info & Quick Settings */}
         {me && (
-          <div className="sidebar-footer">
-            <AvatarSmall name={me.displayName} src={me.avatarUrl} size={32} status="online" />
-            <span className="sidebar-footer-name">{me.displayName}</span>
+          <div className="sidebar-footer" onClick={() => setShowSettings(true)} style={{ cursor: 'pointer' }}>
+            <AvatarSmall name={me.displayName} src={me.avatarUrl} size={36} status="online" />
+            <div className="sidebar-footer-name">
+              <div>{me.displayName}</div>
+              <div style={{ fontSize: 10, color: 'var(--accent-green)', fontWeight: 500, marginTop: 1 }}>● Active on AS CLOUD</div>
+            </div>
             <div className="sidebar-footer-actions">
-              <button id="logout-btn" className="btn btn-icon btn-ghost" onClick={logout} title="Sign out" style={{ fontSize: 16 }}>⏻</button>
+              <button id="quick-settings-btn" className="btn btn-icon btn-ghost" title="Settings" style={{ fontSize: 16 }}>⚙️</button>
             </div>
           </div>
         )}
@@ -312,24 +356,46 @@ export default function ChatLayout({ children }: { children: React.ReactNode }) 
         {children}
       </main>
 
+      {/* New Chat / User Search Modal */}
+      <NewChatModal
+        isOpen={showNewChat}
+        onClose={() => setShowNewChat(false)}
+        users={people}
+        onSelectUser={startDM}
+      />
+
+      {/* Settings & Profile Modal */}
+      {me && (
+        <SettingsModal
+          isOpen={showSettings}
+          onClose={() => setShowSettings(false)}
+          me={me}
+          onUpdateMe={(updated) => {
+            setMe(prev => prev ? { ...prev, ...updated } : prev);
+            fetchPeople();
+          }}
+          onLogout={logout}
+        />
+      )}
+
       {/* New Room Modal */}
       {showNewRoom && (
         <div className="overlay" onClick={() => setShowNewRoom(false)}>
           <div className="modal" onClick={e => e.stopPropagation()}>
-            <div className="modal-title">New Room</div>
+            <div className="modal-title">Create Room</div>
             <form onSubmit={createRoom} className="auth-form" id="new-room-form">
               <div className="field">
                 <label htmlFor="room-name-input">Room Name</label>
-                <input id="room-name-input" value={newRoomName} onChange={e => setNewRoomName(e.target.value)} placeholder="e.g. general" maxLength={30} required autoFocus />
+                <input id="room-name-input" value={newRoomName} onChange={e => setNewRoomName(e.target.value)} placeholder="e.g. general, gaming, tech" maxLength={30} required autoFocus />
               </div>
               <div className="field">
                 <label htmlFor="room-desc-input">Description</label>
-                <input id="room-desc-input" value={newRoomDesc} onChange={e => setNewRoomDesc(e.target.value)} placeholder="Optional" maxLength={100} />
+                <input id="room-desc-input" value={newRoomDesc} onChange={e => setNewRoomDesc(e.target.value)} placeholder="What is this channel about?" maxLength={100} />
               </div>
               <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
                 <button type="button" className="btn btn-secondary flex-1" onClick={() => setShowNewRoom(false)}>Cancel</button>
                 <button id="create-room-submit" type="submit" className="btn btn-primary flex-1" disabled={creating || !newRoomName.trim()}>
-                  {creating ? <span className="spinner" /> : 'Create'}
+                  {creating ? <span className="spinner" /> : 'Create Room'}
                 </button>
               </div>
             </form>
